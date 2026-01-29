@@ -5,8 +5,9 @@ import fdapp/[icons]
 
 test "icon theme":
   let systemTheme = getSystemIconTheme()
-  echo fmt"Your system icon theme is: {systemTheme.id} ({systemTheme.name})"
-  echo "Installed icon themes: ", getIconThemesList().join(", ")
+  if systemTheme != nil:
+    echo fmt"Your system icon theme is: {systemTheme.id} ({systemTheme.name})"
+    echo "Installed icon themes: ", getIconThemesList().join(", ")
 
   let adw = findIconTheme("Adwaita") # Adwaita is installed by default on many distros
   check adw != nil

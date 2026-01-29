@@ -22,14 +22,15 @@ let
 
 
 proc newSettings*(schema: string): GSettings =
-  result.handle = gsettingsNew(schema.cstring)
+  if gioHandle != nil:
+    result.handle = gsettingsNew(schema.cstring)
 
 
 proc getString*(settings: GSettings, key: string): string =
-  try: return $gsettingsGetString(settings.handle, key.cstring)
-  except: discard
+  if gioHandle != nil:
+    return $gsettingsGetString(settings.handle, key.cstring)
 
 
 proc `=destroy`(settings: var GSettings) =
-  try: gobjectUnref(settings.handle)
-  except: discard
+  if gioHandle != nil:
+    try: gobjectUnref(settings.handle) except: discard
