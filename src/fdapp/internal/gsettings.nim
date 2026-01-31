@@ -20,5 +20,5 @@ proc getString*(settings: GSettings, key: string): string =
 template onChanged*(settings: GSettings, key: string, actions: untyped) =
   withGlibContext:
     discard settings.getString(key) # GLib will only emit signal if the key was read at least once
-    let connection = glib.connect(settings, "changed::icon-theme", proc() {.cdecl.} = actions, nil, nil, 0)
+    let connection = glib.connect(cast[GObject](settings), "changed::icon-theme", proc() {.cdecl.} = actions, nil, nil, 0)
     assert connection > 0
