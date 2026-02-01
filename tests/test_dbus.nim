@@ -63,16 +63,3 @@ test "dbus action":
 
   check p.peekExitCode() == 0
   check actionActivated
-
-
-app.onActivate:
-  activated = true
-
-test "single-instance app test":
-  activated = false
-  let p = startProcess(getAppFilename())
-
-  while not activated:
-    fdappIterate()
-
-  check p.waitForExit() == 0

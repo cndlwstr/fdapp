@@ -182,22 +182,24 @@ proc fdappIterate*() =
   glibContext.iterate()
 
 
-proc activate*(app: FreedesktopApp) =
+proc ensureActivation(app: FreedesktopApp) =
   doAssert app.activateCallback != nil, "Attempt to activate application without activate callback set"
-
   while cast[pointer](app.busConnection) == nil:
     fdappIterate() # waiting for dbus connection
 
+
+proc activate*(app: FreedesktopApp) =
+  app.ensureActivation()
   app.activateCallback("", "")
 
 
 proc open*(app: FreedesktopApp, uris: seq[string]) =
-  doAssert app.activateCallback != nil, "Attempt to activate application without activate callback set"
+  app.ensureActivation()
   app.openCallback("", "", uris)
 
 
 proc activateAction*(app: FreedesktopApp, actionName: string) =
-  doAssert app.activateCallback != nil, "Attempt to activate application without activate callback set"
+  app.ensureActivation()
   app.activateActionCallback("", "", actionName)
 
 
