@@ -1,5 +1,5 @@
 import std/[strformat, strutils]
-import fdapp/[icons, internal/glib]
+import fdapp/[icons, internal/glib {.all.}]
 export icons
 
 
@@ -149,7 +149,7 @@ proc nameLostCallback(connection: GDBusConnection, name: cstring, data: pointer)
     quit msg, 1
 
 
-const UnityDesktopFile {.strdefine.} = ""
+const UnityDesktopFile {.strdefine, hint[XDeclaredButNotUsed]: off.} = ""
 
 
 proc fdappInit*(id: string): FreedesktopApp =

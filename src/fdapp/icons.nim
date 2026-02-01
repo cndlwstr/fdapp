@@ -12,7 +12,7 @@
 ]##
 
 import std/[algorithm, os, sequtils, sets, strformat, strutils, tables]
-import internal/gsettings
+import internal/gsettings {.all.}
 from internal/glib import glibContext, iterate
 export glibContext, iterate
 ## .. importdoc:: internal/glib.nim, ../fdapp.nim
