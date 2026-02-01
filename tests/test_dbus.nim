@@ -1,5 +1,5 @@
 import unittest
-import std/[os, osproc]
+import std/osproc
 import fdapp
 
 
