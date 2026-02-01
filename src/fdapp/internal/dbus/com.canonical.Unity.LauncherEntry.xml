@@ -1,0 +1,10 @@
+<interface name='com.canonical.Unity.LauncherEntry'>
+    <method name='Query'>
+        <arg type='s' name='app_uri' direction='out'/>
+        <arg type='a{sv}' name='properties' direction='out'/>
+    </method>
+    <signal name='Update'>
+        <arg type='s' name='app_uri'/>
+        <arg type='a{sv}' name='properties'/>
+    </signal>
+</interface>

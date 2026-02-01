@@ -4,12 +4,23 @@ export icons
 
 
 type
+  UnityParam = enum
+    count, progress, urgent, countVisible = "count-visible", progressVisible = "progress-visible"
+
   FreedesktopAppObj = object
     appId: string
     busId: cuint
+    busConnection: GDBusConnection
+
+    # org.freedesktop.Application
     activateCallback: proc(startupId: string, activationToken: string)
     openCallback: proc(startupId: string, activationToken: string, uris: seq[string])
     activateActionCallback: proc(startupId: string, activationToken: string, actionName: string)
+
+    # com.canonical.Unity.LauncherEntry
+    appUri: string
+    unityObjectPath: string
+    unityParams: tuple[count: int64, progress: float64, urgent, countVisible, progressVisible: bool]
 
   FreedesktopApp* = ref FreedesktopAppObj
 
@@ -26,18 +37,22 @@ const
   SESSION_BUS = 2
   DO_NOT_QUEUE = 4
   FREEDESKTOP_APP_XML = staticRead("fdapp/internal/dbus/org.freedesktop.Application.xml")
+  UNITY_LAUNCHER_XML = staticRead("fdapp/internal/dbus/com.canonical.Unity.LauncherEntry.xml")
 
 
 proc dbusMethodCallCallback(connection: GDBusConnection, sender, objectPath, interfaceName, methodName: cstring, parameters: GVariant, invocation: GDBusMethodInvocation, data: pointer) {.cdecl.} =
   let app = cast[FreedesktopApp](data)
 
   proc getPlatformData(dict: GVariant): (string, string) =
-    let startupIdVariant = dict.lookupValue("desktop-startup-id", newGVariantType("s"))
+    let t = newGVariantType("s")
+    defer: t.free()
+
+    let startupIdVariant = dict.lookupValue("desktop-startup-id", t)
     if cast[pointer](startupIdVariant) != nil:
       result[0] = $startupIdVariant.getString(nil)
       startupIdVariant.unref()
 
-    let activationTokenVariant = dict.lookupValue("activation-token", newGVariantType("s"))
+    let activationTokenVariant = dict.lookupValue("activation-token", t)
     if cast[pointer](activationTokenVariant) != nil:
       result[1] = $activationTokenVariant.getString(nil)
       activationTokenVariant.unref()
@@ -77,6 +92,20 @@ proc dbusMethodCallCallback(connection: GDBusConnection, sender, objectPath, int
 
         app.activateActionCallback(startupId, activationToken, actionName)
     else: discard
+    invocation.returnValue(nil)
+    return
+  elif interfaceName == "com.canonical.Unity.LauncherEntry" and methodName == "Query":
+    let t = newGVariantType("a{sv}")
+    defer: t.free()
+    let builder = newGVariantBuilder(t)
+    defer: builder.unref()
+    builder.add("{sv}", "count", newGVariant("x", app.unityParams.count.culong))
+    builder.add("{sv}", "progress", newGVariant("d", app.unityParams.progress.cdouble))
+    builder.add("{sv}", "urgent", newGVariant("b", if app.unityParams.urgent: 1 else: 0))
+    builder.add("{sv}", "count-visible", newGVariant("b", if app.unityParams.countVisible: 1 else: 0))
+    builder.add("{sv}", "progress-visible", newGVariant("b", if app.unityParams.progressVisible: 1 else: 0))
+    invocation.returnValue(newGVariant("(sa{sv})", app.appUri.cstring, builder))
+    return
 
   invocation.returnValue(nil)
 
@@ -86,11 +115,21 @@ const dbusVTable = GDBusInterfaceVTable(methodCall: dbusMethodCallCallback, getP
 
 proc busAcquiredCallback(connection: GDBusConnection, name: cstring, data: pointer) {.cdecl.} =
   let app = cast[FreedesktopApp](data)
-  let objectPath = ("/" & app.appId.replace('-', '_').replace('.', '/')).cstring
-  let id = connection.registerObject(objectPath, dbusInfo.interfaces[0], dbusVTable.addr, data, nil, nil)
+  app.busConnection = connection
 
-  doAssert id > 0, "Failed to register DBus object"
-  app.busId = id
+  let freedesktopObjectPath = ("/" & app.appId.replace('-', '_').replace('.', '/')).cstring
+  let freedesktopId = connection.registerObject(freedesktopObjectPath, dbusInfo.interfaces[0], dbusVTable.addr, data, nil, nil)
+  doAssert freedesktopId > 0, "Failed to register DBus object for path " & $freedesktopObjectPath
+
+  proc djb2(s: string): uint64 =
+    var hash: uint64 = 5381
+    for c in s:
+      hash = (hash shl 5) + hash + uint64(c)
+    return hash
+
+  app.unityObjectPath = "/com/canonical/unity/launcherentry/" & $app.appUri.djb2()
+  let unityId = connection.registerObject(app.unityObjectPath.cstring, dbusInfo.interfaces[1], dbusVTable.addr, data, nil, nil)
+  doAssert unityId > 0, "Failed to register DBus object for path" & app.unityObjectPath
 
 
 proc nameLostCallback(connection: GDBusConnection, name: cstring, data: pointer) {.cdecl.} =
@@ -110,6 +149,9 @@ proc nameLostCallback(connection: GDBusConnection, name: cstring, data: pointer)
     quit msg, 1
 
 
+const UnityDesktopFile {.strdefine.} = ""
+
+
 proc fdappInit*(id: string): FreedesktopApp =
   doAssert id.len > 0, "Application ID can't be empty"
   doAssert id.count('.') >= 2, "Application ID must be in reverse-DNS format"
@@ -117,17 +159,35 @@ proc fdappInit*(id: string): FreedesktopApp =
   result = new FreedesktopApp
   result.appId = id
 
-  var dbusXml = fmt"<node>{FREEDESKTOP_APP_XML}</node>".cstring
+  when defined(UnityDesktopFile):
+    let desktopFile = if UnityDesktopFile.endsWith(".desktop"): UnityDesktopFile else: UnityDesktopFile & ".desktop"
+    result.appUri = fmt"application://{desktopFile}"
+  else:
+    result.appUri = fmt"application://{id}.desktop"
+
+  var dbusXml = fmt"<node>{FREEDESKTOP_APP_XML}{UNITY_LAUNCHER_XML}</node>".cstring
   withGlibContext:
     var err: GError
     dbusInfo = newGDBusNodeInfoForXml(dbusXml, err.addr)
     doAssert err == nil, $err.message
 
-    discard gbusOwnName(SESSION_BUS, id.cstring, DO_NOT_QUEUE, busAcquiredCallback, nil, nameLostCallback, result[].addr, nil)
+    result.busId = gbusOwnName(SESSION_BUS, id.cstring, DO_NOT_QUEUE, busAcquiredCallback, nil, nameLostCallback, result[].addr, nil)
+
+
+proc fdappIterate*() =
+  ## Non-blocking iteration of fdapp's context.
+  ##
+  ## You must call this in your app's event loop.
+
+  glibContext.iterate()
 
 
 proc activate*(app: FreedesktopApp) =
   doAssert app.activateCallback != nil, "Attempt to activate application without activate callback set"
+
+  while cast[pointer](app.busConnection) == nil:
+    fdappIterate() # waiting for dbus connection
+
   app.activateCallback("", "")
 
 
@@ -160,9 +220,59 @@ template onAction*(app: FreedesktopApp, actions: untyped) =
   app.activateActionCallback = activateActionCallback
 
 
-proc fdappIterate*() =
-  ## Non-blocking iteration of fdapp's context.
-  ##
-  ## You must call this in your app's event loop.
+proc emitUnityUpdate(app: FreedesktopApp, param: UnityParam) =
+  let t = newGVariantType("a{sv}")
+  defer: t.free()
+  let builder = newGVariantBuilder(t)
+  defer: builder.unref()
+  let name = ($param).cstring
 
-  glibContext.iterate()
+  case param
+  of count:
+    builder.add("{sv}", name, newGVariant("x", app.unityParams.count.culong))
+  of progress:
+    builder.add("{sv}", name, newGVariant("d", app.unityParams.progress.cdouble))
+  of urgent:
+    builder.add("{sv}", name, newGVariant("b", if app.unityParams.urgent: 1 else: 0))
+  of countVisible:
+    builder.add("{sv}", name, newGVariant("b", if app.unityParams.countVisible: 1 else: 0))
+  of progressVisible:
+    builder.add("{sv}", name, newGVariant("b", if app.unityParams.progressVisible: 1 else: 0))
+
+  let params = newGVariant("(sa{sv})", app.appUri.cstring, builder)
+  discard app.busConnection.emitSignal(nil, app.unityObjectPath.cstring, "com.canonical.Unity.LauncherEntry", "Update", params, nil)
+
+
+proc setTaskbarCount*(app: FreedesktopApp, value: int64) =
+  app.unityParams.count = value
+  app.emitUnityUpdate(count)
+
+
+proc setTaskbarProgress*(app: FreedesktopApp, value: float64) =
+  assert value >= 0.0 and value <= 1.0
+  app.unityParams.progress = value
+  app.emitUnityUpdate(progress)
+
+
+proc setTaskbarUrgent*(app: FreedesktopApp, value: bool) =
+  app.unityParams.urgent = value
+  app.emitUnityUpdate(urgent)
+
+
+proc setTaskbarCountVisible*(app: FreedesktopApp, value: bool) =
+  app.unityParams.countVisible = value
+  app.emitUnityUpdate(countVisible)
+
+
+proc setTaskbarProgressVisible*(app: FreedesktopApp, value: bool) =
+  app.unityParams.progressVisible = value
+  app.emitUnityUpdate(progressVisible)
+
+
+proc resetTaskbar*(app: FreedesktopApp) =
+  app.setTaskbarCount(0)
+  app.setTaskbarProgress(0.0)
+  app.setTaskbarUrgent(false)
+  app.setTaskbarCountVisible(false)
+  app.setTaskbarProgressVisible(false)
+

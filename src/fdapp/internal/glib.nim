@@ -26,6 +26,7 @@ type
   GMainContext* = ptr object
   GVariant* = ptr object
   GVariantType* = ptr object
+  GVariantBuilder* = ptr object
   GVariantIter* = ptr object
   GObject* = ptr object
 
@@ -59,10 +60,18 @@ proc getString*(value: GVariant, length: ptr csize_t): cstring {.gio, importc:"g
 proc getChildValue*(value: GVariant, index: csize_t): GVariant {.gio, importc:"g_variant_get_child_value".}
 proc lookupValue*(dictionary: GVariant, key: cstring, expectedType: GVariantType): GVariant {.gio, importc:"g_variant_lookup_value".}
 proc unref*(value: GVariant) {.gio, importc:"g_variant_unref".}
-proc newGVariantType*(format: cstring): GVariantType {.gio, importc:"g_variant_type_new".}
+
+proc newGVariantBuilder*(t: GVariantType): GVariantBuilder {.gio, importc:"g_variant_builder_new".}
+proc add*(builder: GVariantBuilder, format: cstring) {.gio, importc:"g_variant_builder_add", varargs.}
+proc builderEnd*(builder: GVariantBuilder): GVariant {.gio, importc:"g_variant_builder_end".}
+proc unref*(builder: GVariantBuilder) {.gio, importc:"g_variant_builder_unref".}
+
 proc newGVariantIter*(value: GVariant): GVariantIter {.gio, importc:"g_variant_iter_new".}
 proc loop*(iter: GVariantIter, format: cstring): cint {.gio, importc:"g_variant_iter_loop", varargs.}
 proc free*(iter: GVariantIter) {.gio, importc:"g_variant_iter_free".}
+
+proc newGVariantType*(format: cstring): GVariantType {.gio, importc:"g_variant_type_new".}
+proc free*(t: GVariantType) {.gio, importc:"g_variant_type_free".}
 
 # --- GObject ---
 proc unref*(value: GObject) {.gio, importc:"g_object_unref".}
@@ -76,6 +85,7 @@ proc gbusUnownName*(owner: cuint) {.gio, importc:"g_bus_unown_name".}
 proc registerObject*(connection: GDBusConnection, objectPath: cstring, interfaceInfo: pointer, vtable: ptr GDBusInterfaceVTable, data, dataFreeFunc: pointer, error: ptr GError): cuint {.gio, importc:"g_dbus_connection_register_object".}
 proc returnValue*(invocation: GDBusMethodInvocation, parameters: GVariant) {.gio, importc:"g_dbus_method_invocation_return_value".}
 proc call*(connection: GDBusConnection, busName, objectPath, interfaceName, methodName: cstring, parameters: GVariant, replyType: GVariantType, flags: cint, timeoutMsec: cint, cancellable: pointer, error: ptr GError): GVariant {.gio, importc:"g_dbus_connection_call_sync".}
+proc emitSignal*(connection: GDBusConnection, busName, objectPath, interfaceName, signalName: cstring, parameters: GVariant, error: ptr GError): cint {.gio, importc:"g_dbus_connection_emit_signal".}
 
 # --- GSettings ---
 proc newGSettings*(schema: cstring): GSettings {.gio, importc:"g_settings_new".}
