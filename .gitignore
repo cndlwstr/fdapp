@@ -4,3 +4,6 @@ htmldocs/
 nimble.develop
 nimble.paths
 nimbledeps
+
+tests/test*
+!tests/test*.nim
