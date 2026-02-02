@@ -203,23 +203,32 @@ proc activateAction*(app: FreedesktopApp, actionName: string) =
   app.activateActionCallback("", "", actionName)
 
 
-template onActivate*(app: FreedesktopApp, actions: untyped) =
-  let activateCallback = proc(startupId {.inject.}, activationToken {.inject.}: string) = actions
-  app.activateCallback = activateCallback
+proc `onActivate=`*(app: FreedesktopApp, callback: proc(startupId, activationToken: string)) =
+  app.activateCallback = callback
   if app.openCallback == nil:
-    app.openCallback = proc(startupId {.inject.}, activationToken {.inject.}: string, _: seq[string]) = activateCallback(startupId, activationToken)
+    app.openCallback = proc(startupId, activationToken: string, _: seq[string]) = callback(startupId, activationToken)
   if app.activateActionCallback == nil:
-    app.activateActionCallback = proc(startupId {.inject.}, activationToken {.inject.}: string, _: string) = activateCallback(startupId, activationToken)
+    app.activateActionCallback = proc(startupId, activationToken: string, _: string) = callback(startupId, activationToken)
+
+
+template onActivate*(app: FreedesktopApp, actions: untyped) =
+  app.onActivate = proc(startupId {.inject.}, activationToken {.inject.}: string) = actions
+
+
+proc `onOpen=`*(app: FreedesktopApp, callback: proc(startupId, activationToken: string, uris: seq[string])) =
+  app.openCallback = callback
 
 
 template onOpen*(app: FreedesktopApp, actions: untyped) =
-  let openCallback = proc(startupId {.inject.}, activationToken {.inject.}: string, uris {.inject.}: seq[string]) = actions
-  app.openCallback = openCallback
+  app.onOpen = proc(startupId {.inject.}, activationToken {.inject.}: string, uris {.inject.}: seq[string]) = actions
+
+
+proc `onAction=`*(app: FreedesktopApp, callback: proc(startupId, activationToken, actionName: string)) =
+  app.activateActionCallback = callback
 
 
 template onAction*(app: FreedesktopApp, actions: untyped) =
-  let activateActionCallback = proc(startupId {.inject.}, activationToken {.inject.}, actionName {.inject.}: string) = actions
-  app.activateActionCallback = activateActionCallback
+  app.onAction = proc(startupId {.inject.}, activationToken {.inject.}, actionName {.inject.}: string) = actions
 
 
 proc emitUnityUpdate(app: FreedesktopApp, param: UnityParam) =
