@@ -215,12 +215,13 @@ proc nameLostCallback(connection: GDBusConnection, name: cstring, data: pointer)
       builder.add("s", arg.cstring)
 
     let argsAreUris = args.filter(proc (arg: string): bool = arg.contains("://")).len == args.len
-    if argsAreUris and (orgFreedesktopApplication in app.interfaces):
+    let argsArePaths = args.filter(proc (arg: string): bool = arg.startsWith('/')).len == args.len
+    if (argsAreUris or argsArePaths) and (orgFreedesktopApplication in app.interfaces):
       ret = connection.call(app.appId.cstring, objectPath, "org.freedesktop.Application", "Open", newGVariant("(asa{sv})", builder, nil), nil, 0, -1, nil, error.addr)
     elif commandLine in app.interfaces:
       ret = connection.call(app.appId.cstring, objectPath, app.appId.cstring, "CommandLine", newGVariant("(as)", builder), nil, 0, -1, nil, error.addr)
     else:
-      ret = connection.call(app.appId.cstring, objectPath, "org.freedesktop.Application", "Open", newGVariant("(asa{sv})", builder, nil), nil, 0, -1, nil, error.addr)
+      ret = connection.call(app.appId.cstring, objectPath, "org.freedesktop.Application", "Activate", newGVariant("(a{sv})", nil), nil, 0, -1, nil, error.addr)
   else:
     if orgFreedesktopApplication in app.interfaces:
       ret = connection.call(app.appId.cstring, objectPath, "org.freedesktop.Application", "Activate", newGVariant("(a{sv})", nil), nil, 0, -1, nil, error.addr)
@@ -394,6 +395,9 @@ template onCommandLine*(app: FreedesktopApp, actions: untyped) =
 
 
 proc emitUnityUpdate(app: FreedesktopApp, param: UnityParam) =
+  if not (comCanonicalUnity in app.interfaces):
+    return
+
   let t = newGVariantType("a{sv}")
   defer: t.free()
   let builder = newGVariantBuilder(t)

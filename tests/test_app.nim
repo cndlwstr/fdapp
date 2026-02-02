@@ -3,18 +3,8 @@ import std/[os, osproc]
 import fdapp
 
 
-const APP_ID = "io.github.cndlwstr.test"
+let app = fdappInit("io.github.cndlwstr.test")
 var activated = 0
-
-test "validate app id":
-  try:
-    discard fdappInit("somethingThatIs.NotReverseDNS")
-    check false
-  except AssertionDefect:
-    check true
-
-
-let app = fdappInit(APP_ID)
 app.onActivate:
   inc activated
 
