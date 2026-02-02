@@ -5,5 +5,8 @@ nimble.develop
 nimble.paths
 nimbledeps
 
+examples/fdapp*
+!examples/fdapp*.nim
+
 tests/test*
 !tests/test*.nim
