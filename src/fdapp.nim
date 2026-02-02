@@ -2,10 +2,45 @@ import std/[cmdline, sequtils, strformat, strutils]
 import fdapp/[icons, internal/glib {.all.}]
 export icons
 
+##[
+  Main fdapp module provides a way to create an application that runs a DBus service under a well-known name.
+
+  Use `fdappInit`_ to initialize. By default, 3 interfaces are provided on DBus:
+
+    * `org.freedesktop.Application`
+
+      Allows the user's desktop environment to launch your application using DBus, optionally sending arguments. See the spec `here <https://specifications.freedesktop.org/desktop-entry/latest/dbus.html>`_.
+
+    * `com.canonical.Unity.LauncherEntry`
+
+      Allows to modify your app's taskbar icon by showing a counter or a progress bar, or setting the icon into urgent state (quicklists are not supported by fdapp). You should never expect these modifications to be shown since not all desktop environments and taskbars support Unity Launcher API. See the spec `here <https://wiki.ubuntu.com/Unity/LauncherAPI>`_.
+
+      For testing purposes or when building for environments where desktop file name doesn't match app ID (for example, in Snap packages), define `UnityDesktopFile` to be the filename (just name, not path) of your desktop file.
+
+    * a custom interface that provides `CommandLine` method
+
+      The interface will have the name matching your app ID. The purpose of `CommandLine` method is to pass command-line arguments that are not file paths or URIs. This is a non-standard addition that will not be used by desktop environments, but may be useful if you want your app to parse custom command-line arguments.
+
+  Each interface can be disabled, but not both `org.freedesktop.Application` and the custom interface at the same time.
+
+  Running a DBus service under a well-known name means that your application will become single-instance. But this doesn't mean it has to be a single-window app, see `SDL2 example <https://github.com/cndlwstr/fdapp/blob/main/examples/fdapp_sdl2.nim>`_ to get the idea of how a multi-window app can be implemented.
+
+  In case when your application fails to own a name after start (because there's already an instance running), it will call a method on the running instance:
+
+    * if there is no arguments passed, `Activate` will be called or, if `org.freedesktop.Application` interface is disabled, `CommandLine` will be called;
+    * if there are some arguments passed, the app will check if all of them are URIs or file paths:
+        * if yes, `Open` will be called or, if `org.freedesktop.Application` interface is disabled, `CommandLine` will be called.
+        * if no, `CommandLine` will be called or, if the custom interface is disabled, `Activate` will be called (without passing arguments).
+
+  For the functionality of this module to work, you must call `fdappIterate`_ in your application's loop.
+]##
 
 type
   DBusInterface* = enum
-    orgFreedesktopApplication, comCanonicalUnity, commandLine
+    ## Represents a DBus interface
+    orgFreedesktopApplication, ## `org.freedesktop.Application`
+    comCanonicalUnity, ## `com.canonical.Unity.LauncherEntry`
+    commandLine ## an interface with application ID as the name that provides `CommandLine` method
 
   DBusInterfaces* = set[DBusInterface]
 
@@ -29,6 +64,7 @@ type
     commandLineCallback: proc(args: seq[string])
 
   FreedesktopApp* = ref FreedesktopAppObj
+    ## Represents an application
 
   UnityParam = enum
     count, progress, urgent, countVisible = "count-visible", progressVisible = "progress-visible"
@@ -204,6 +240,12 @@ const UnityDesktopFile {.strdefine.} = ""
 
 
 proc fdappInit*(id: static string, interfaces: static DBusInterfaces = {orgFreedesktopApplication, comCanonicalUnity, commandLine}): FreedesktopApp =
+  ## Initialize fdapp.
+  ##
+  ## `id` must be a valid application id in reverse-DNS notation (for example, "io.github.cndlwstr.fdapp"). This id will be used as a well-known name on DBus to be owned and as a filename of the application's desktop file for Unity Launcher API (unless `UnityDesktopFile` is defined).
+  ##
+  ## `interfaces` is a set of interfaces to provide on DBus. All interfaces are enabled by default. The set must contain at least either `orgFreedesktopApplication <#DBusInterface>`_ or `commandLine <#DBusInterface>`_.
+
   static:
     doAssert id.len > 0, "Application ID can't be empty"
     doAssert id.count('.') >= 2, "Application ID must be in reverse-DNS format"
@@ -232,7 +274,9 @@ proc fdappInit*(id: static string, interfaces: static DBusInterfaces = {orgFreed
 proc fdappIterate*() =
   ## Non-blocking iteration of fdapp's context.
   ##
-  ## You must call this in your app's event loop.
+  ## You must call this in your app's loop.
+  ##
+  ## This is a shortcut for `glibContext.iterate <fdapp/internal/glib.html#glibContext>`_.
 
   glibContext.iterate()
 
@@ -244,26 +288,40 @@ proc ensureActivation(app: FreedesktopApp) =
 
 
 proc activate*(app: FreedesktopApp) =
+  ## Calls `onActivate=`_ callback.
+
   app.ensureActivation()
   app.activateCallback("", "")
 
 
 proc open*(app: FreedesktopApp, uris: seq[string]) =
+  ## Calls `onOpen=`_ callback.
+
   app.ensureActivation()
   app.openCallback("", "", uris)
 
 
 proc activateAction*(app: FreedesktopApp, actionName: string) =
+  ## Calls `onAction=`_ callback.
+
   app.ensureActivation()
   app.activateActionCallback("", "", actionName)
 
 
 proc commandLine*(app: FreedesktopApp, args: seq[string]) =
+  ## Calls `onCommandLine=`_ callback.
+
   doAssert app.commandLineCallback != nil, "Attempt to send command-line arguments without command-line callback set"
   app.commandLineCallback(args)
 
 
 proc `onActivate=`*(app: FreedesktopApp, callback: proc(startupId, activationToken: string)) =
+  ## Sets a callback for Activate method on `org.freedesktop.Application` interface.
+  ##
+  ## See `the spec <https://specifications.freedesktop.org/desktop-entry/latest/dbus.html>`_ for details on `startupId` and `activationToken`.
+  ##
+  ## If callbacks for other DBus methods are not set, calling these methods will fall back to using this `callback`.
+
   app.activateCallback = callback
   if app.openCallback == nil:
     app.openCallback = proc(startupId, activationToken: string, _: seq[string]) = callback(startupId, activationToken)
@@ -274,30 +332,64 @@ proc `onActivate=`*(app: FreedesktopApp, callback: proc(startupId, activationTok
 
 
 template onActivate*(app: FreedesktopApp, actions: untyped) =
+  ## Sets a callback for Activate method on `org.freedesktop.Application` interface.
+  ##
+  ## This is a shortcut for `onActivate=`_. Parameters `startupId` and `activationToken` are injected.
+
   app.onActivate = proc(startupId {.inject.}, activationToken {.inject.}: string) = actions
 
 
 proc `onOpen=`*(app: FreedesktopApp, callback: proc(startupId, activationToken: string, uris: seq[string])) =
+  ## Sets a callback for Open method on `org.freedesktop.Application` interface.
+  ##
+  ## See `the spec <https://specifications.freedesktop.org/desktop-entry/latest/dbus.html>`_ for details on `startupId` and `activationToken`.
+  ##
+  ## `uris` is a sequence of URIs to open. Take note that local files may either be passed in a form of `file://...` URIs or as file paths when `%u` or `%U` field is used in your application's desktop file (see details `here <https://specifications.freedesktop.org/desktop-entry/latest/exec-variables.html>`_).
+
   app.openCallback = callback
 
 
 template onOpen*(app: FreedesktopApp, actions: untyped) =
+  ## Sets a callback for Open method on `org.freedesktop.Application` interface.
+  ##
+  ## This is a shortcut for `onOpen=`_. Parameters `startupId`, `activationToken` and `uris` are injected.
+
   app.onOpen = proc(startupId {.inject.}, activationToken {.inject.}: string, uris {.inject.}: seq[string]) = actions
 
 
 proc `onAction=`*(app: FreedesktopApp, callback: proc(startupId, activationToken, actionName: string)) =
+  ## Sets a callback for ActivateAction method on `org.freedesktop.Application` interface.
+  ##
+  ## See `the spec <https://specifications.freedesktop.org/desktop-entry/latest/dbus.html>`_ for details on `startupId` and `activationToken`.
+  ##
+  ## `actionName` is the name of the action.
+  ##
+  ## While the interface method includes argument `parameter` with type `av`, it's unclear from the spec what it is used for. Current fdapp implementation completely ignores it and doesn't pass to the callback. Please open an issue if you know why and how this should be changed.
+
   app.activateActionCallback = callback
 
 
 template onAction*(app: FreedesktopApp, actions: untyped) =
+  ## Sets a callback for ActivateAction method on `org.freedesktop.Application` interface.
+  ##
+  ## This is a shortcut for `onAction=`_. Parameters `startupId`, `activationToken` and `actionName` are injected.
+
   app.onAction = proc(startupId {.inject.}, activationToken {.inject.}, actionName {.inject.}: string) = actions
 
 
 proc `onCommandLine=`*(app: FreedesktopApp, callback: proc(args: seq[string])) =
+  ## Sets a callback for CommandLine method on the custom interface.
+  ##
+  ## `args` is a sequence of command-line arguments.
+
   app.commandLineCallback = callback
 
 
 template onCommandLine*(app: FreedesktopApp, actions: untyped) =
+  ## Sets a callback for CommandLine method on the custom interface.
+  ##
+  ## This is a shortcut for `onCommandLine=`_. Parameter `args` is injected.
+
   app.commandLineCallback = proc(args {.inject.}: seq[string]) = actions
 
 
@@ -325,32 +417,62 @@ proc emitUnityUpdate(app: FreedesktopApp, param: UnityParam) =
 
 
 proc setTaskbarCount*(app: FreedesktopApp, value: int64) =
+  ## Sets `value` for counter in taskbar icon using Unity Launcher API.
+  ##
+  ## Do not forget to call `setTaskbarCountVisible`_ to enable showing counter in taskbar.
+  ##
+  ## When `comCanonicalUnity <#DBusInterface>`_ is not enabled in `fdappInit`_, this has no effect.
+
   app.unityParams.count = value
   app.emitUnityUpdate(count)
 
 
 proc setTaskbarProgress*(app: FreedesktopApp, value: float64) =
+  ## Sets `value` for progress bar in taskbar icon using Unity Launcher API.
+  ##
+  ## `value` must be in range `0.0..1.0`.
+  ##
+  ## Do not forget to call `setTaskbarProgressVisible`_ to enable showing progress bar in taskbar.
+  ##
+  ## When `comCanonicalUnity <#DBusInterface>`_ is not enabled in `fdappInit`_, this has no effect.
+
   assert value >= 0.0 and value <= 1.0
   app.unityParams.progress = value
   app.emitUnityUpdate(progress)
 
 
 proc setTaskbarUrgent*(app: FreedesktopApp, value: bool) =
+  ## Sets whether urgent state in taskbar icon should be enabled using Unity Launcher API.
+  ##
+  ## When `comCanonicalUnity <#DBusInterface>`_ is not enabled in `fdappInit`_, this has no effect.
+
   app.unityParams.urgent = value
   app.emitUnityUpdate(urgent)
 
 
 proc setTaskbarCountVisible*(app: FreedesktopApp, value: bool) =
+  ## Sets visibility of counter in taskbar icon using Unity Launcher API.
+  ##
+  ## When `comCanonicalUnity <#DBusInterface>`_ is not enabled in `fdappInit`_, this has no effect.
+
   app.unityParams.countVisible = value
   app.emitUnityUpdate(countVisible)
 
 
 proc setTaskbarProgressVisible*(app: FreedesktopApp, value: bool) =
+  ## Sets visibility of progress bar in taskbar icon using Unity Launcher API.
+  ##
+  ## When `comCanonicalUnity <#DBusInterface>`_ is not enabled in `fdappInit`_, this has no effect.
+
   app.unityParams.progressVisible = value
   app.emitUnityUpdate(progressVisible)
 
 
 proc resetTaskbar*(app: FreedesktopApp) =
+  ## Resets taskbar icon state using Unity Launcher API.
+  ##
+  ## If your application uses other methods to modify taskbar icon, it's suggested to call this before your application quits as it is not guaranteed that the user's taskbar will reset the icon automatically.
+
   app.setTaskbarCount(0)
   app.setTaskbarProgress(0.0)
   app.setTaskbarUrgent(false)
